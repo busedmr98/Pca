@@ -1,0 +1,1227 @@
+---
+title: "PCA and Clustering "
+author: "Buse Demir"
+date: "12 06 2022"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+## Gerekli Kutuphaneler
+library(readr)
+library(cluster)
+library(devtools)
+library(graphics)
+library(corrplot)
+library(pastecs)
+library(factoextra)
+library(igraph)
+library(ggplot2)
+library(ggbiplot)
+library(fpc)
+library(fossil)
+library(hopkins)
+library(clustertend)
+library(NbClust)
+library(psych)
+library(ggthemes)
+library(dendextend)
+library(ggpubr)
+library(MASS)
+library(fpc)
+library(dbscan)
+library(mclust)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+## Verinin Yüklenmesi ve kolonlarin cikarilmasi
+data <- read_csv("data.csv")
+data<-data[,-1]
+labeled_data<-data[,-c(12:32)]
+data<-labeled_data[,-1]
+scale_data<-scale(data)
+```
+
+# 1) Tanımlayıcı İstatistikler
+### Veri Setinin Tanıtılması
+#### diagnosis=Teşhis(M=Malign(Kötü Huylu),B=Benign(İyi Huylu)))
+#### radius_mean=Yarıçap Ort.
+#### texture_mean=Doku Ort.(gri tonlamalı değerlerin Ort.)
+#### perimeter_mean=çevre Ort.
+#### area_mean=Alan Ort.
+#### smothness_mean=Düzgünlük Ort.(yarıçap uzunluklarında yerel değişiklik)
+#### compectness_mean=Kompaktlık Ort.(çevre^2 / alan - 1.0)
+#### concavity_mean=İçbükeylik Ort.(konturun içbükey kısımlarının şiddeti)
+#### concave_point=içbükey noktaların Ort. (konturun içbükey bölümlerinin sayısı)
+#### symmetry_mean=Simetri Ort.
+#### fractal_dimension_mean=Fraktal Boyut Ort.("kıyı çizgisi yaklaşımı" )
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+head(labeled_data[,c(1:6)])
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(data)
+```
+
+#### Özellikle *texture_mean*, *area_mean* gibi birçok değişkende sapan değerler gözlemlenmiştir.
+
+```{r warning=FALSE, include=FALSE}
+describeBy(labeled_data[,2:11], group=labeled_data[,1])
+```
+
+```{r}
+apply(data,2,sd)
+apply(data,2,mean)
+```
+
+#### Değişkenlerin varyansaları ve özellikle ortalamaları birbirinden oldukça farklı olduğu için korelasyon matrisi üzerinden PCA yapılmalıdır.
+
+# 2) Korelasyon Matrisi
+
+```{r fig.height=6, fig.width=8, message=FALSE, warning=FALSE, include=FALSE}
+pairs(data)
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=8, message=FALSE, warning=FALSE}
+corr <- cor(data, method = "pearson")
+corrplot.mixed(corr, lower="pie",upper="number")
+```
+
+#### *radius_mean ve perimeter_mean 1
+#### *radius_mean ve area_mean 0.99
+#### *area_mean ve perimeter_mean 0.99
+#### *concavity_mean ve concave_point_mean 0.92
+#### ile pozitif yönde en yüksek ilişkiye sahip değişkenlerdir. Genel olarak değişkenlerin bir çoğu birbirleriyle oldukça ilişkilidir.(pozitif yönde)
+
+# 3) Kutu Grafikleri (Box-Plot)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=c(1,2))
+boxplot(data,main= "Kutu Grafiği")
+boxplot(scale_data,main= "Standartlaştırılmış Kutu Grafiği")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Sapan deger olan değiskenlerin ayri ayri grafikleri
+par(mfrow=c(2,3))
+boxplot(scale(data$texture_mean),horizontal = TRUE,col="red",main="Texture")
+boxplot(scale(data$area_mean),horizontal = TRUE,col="seagreen",main="Area")
+boxplot(scale(data$smoothness_mean),horizontal = TRUE,col="purple",main="Smoothness")
+boxplot(scale(data$compactness_mean),horizontal = TRUE,col="darkblue",main="Compactness")
+boxplot(scale(data$symmetry_mean),horizontal = TRUE,col="green",main="Symmetry")
+boxplot(scale(data$fractal_dimension_mean),horizontal = TRUE,col="pink",main="Fractal.Dim")
+```
+
+### Değişkenlerin veri standaştırıldıktan sonraki kutu grafiklerine bakıldığında uç ve aykırı değerlere sahip olduğu görülmektedir.*area_mean* ve *fraction_dimension_mean* değişkenleri en çok sapan değere sahip olan değişkenlerdir.
+
+# 4) PCA
+### Bileşen Sayısı
+#### Özdeğerler
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.cor <- cor(data)
+data.eigen <- eigen(data.cor)
+eigenvalues <- data.eigen$value
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+prop.var <- data.eigen$value/sum(data.eigen$values )
+cum.prop.var <- cumsum(prop.var)
+rbind(eigenvalues,prop.var,cum.prop.var)
+```
+
+#### İlk 2 bileşenin değeri 1'in üstünde ve 3.bileşen değeri 1'e yakın olduğu için şimdilik 3 bileşen veriyi açıklamaya yetiyor.
+#### 1.bileşen tek başına verilerin %54'ünü açıklarken ikinci bileşenle birlikte verilerin %80'i açıklanabilirken 3.bileşenle birlikteyse %88'lik bir açıklayıcılağa erişiliyor.
+
+
+### Temel bileşen sayısına karar vermek için bakılan grafikler ve yapılan analizler
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=c(1,2))
+plot(prop.var , xlab=" Principal Component ", ylab=" Proportion of
+Variance Explained ", ylim=c(0,1) ,type='b')# dirsek metoduna göre k=3 seçilebilir
+
+plot(cum.prop.var, xlab=" Principal Component ", ylab ="
+Cumulative Proportion of Variance Explained ", ylim=c(0,1) ,
+     type='b')
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.pca <- prcomp(data, center = TRUE, scale. = TRUE)
+summary(data.pca)
+plot(data.pca)
+```
+
+#### 2.bileşenden sonra Önemli bir degişim olmamış.
+
+### Özdeğerlerin karekökleri
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+sqrt(data.eigen$values)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=c(2,2))
+screeplot(data.pca)
+screeplot(data.pca,type="lines")
+fviz_eig(data.pca)
+```
+
+#### PC3 bileşininden sonra özdeğerler ve sd değerleri 1'in altına düştüğü, scree plot ve plot grafiklerine  bakıldığında (dirsek metodu) 2.bileşenden sonra çok büyük bir değişim olmadığı ve PC2 ile verinin total olarak %80'i açıklanabildiği için burada 2 bileşen seçilmiştir ve analize 2 bileşen üzerinden devam edilmiştir. (Burada 3. bileşende analize dahil edilebilirdi. 3.bileşenin özdeğeri 0.87 idi. (1'den düşük ama 1'e yakın olduğu için  belkide tolere edilebilirdi) ve 3. bileşenle birlikte  verilerin %88'i açıklanabilmekteydi. Ama benim için  %80'lik bir açıklayıcılık yeterli olmuştur. )
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.pca$x [1:10,1:2]
+```
+
+###  Temel Bileşenlerin Yorumlanması
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+data.pca$rotation [1:10,1:4] #ozvektorler
+```
+
+#### Özvektör değerlerine göre artık verinin boyut indirgenmiş halinde PC1 bileşeni *radius_mean*,*texture_mean*, *perimeter_mean* , *area_mean* , *compactness_mean*,*concavity_mean* ve *concave points_mean* değişkenlerini temsil ederken PC2 *smoothnes_mean* ve *symmetry_mean* ve *fractal_dimension_mean* değişkenlerini  temsil ediyor. PC1->Cell_Values, PC2->Cell_Shape
+#### Burada aslında PC3 0.95 ile *texture* ya da PC4 0.89 ile *symmetry* değişkenini temsil ediyor gibi görünüyor fakat değişkenler arasındaki korelasyon yüksek olduğu için dikkate alınmamaktadır.
+
+
+```{r echo=FALSE, fig.height=11, fig.width=14, message=FALSE, warning=FALSE}
+biplot(data.pca)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data.pca$x [462,1:2]
+data[462,]
+```
+
+#### Yukarıdaki grafikte bileşenler bazında değişkenlerin ve kişilerin (hasta numaraları) konumları gösterilmiştir. 462. gözlem değerinin konumuna bakıldığında PC1 (Cell_Values) açısından negatif PC2 (trade) açısından pozitif konumda yer almaktadır ve en yüksek temsil edilme oranı 1.bileşen ile olmuştur. 462.gözlem değeri tüm değişkenlerle aynı tarafta olduğu için tüm değişkenler açısından yüksek değerler almıştır.(Etiketi M.)
+
+### Bazı gözlem değerlerinin incelenmesi
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+data[308,]
+data.pca$x[308,1:2]
+```
+
+#### 308.gözlem değerine bakıldığında ise yine en yüksek 1. bileşen tarafından temsil edilmektedir. Ve tüm değişkenlerle zıt konumda bulunduğu için tüm değişkenler açısından ortalamadan düşük değerler almıştır.(308.gözlem değerinin etiketi B olduğu için değerlerin düşük olması tümörün iyi huylu olduğu anlamına gelir :)
+
+### Değişkenlerin Her Bileşene Katkısı
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+res.var <- get_pca_var(data.pca)
+res.var$contrib [1:10,1:4]     
+```
+
+#### Dim1 boyutunda concave points_mean 17.49 ile , Dim2 boyutunda ise fractal_dim_mean 32.57 ile en fazla katkıda bulunan değişkenlerdir.
+
+
+### Değişkenlerin her bir bileşen tarafından açıklanma oranları
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+res.var$cos2 [1:10,1:4] 
+```
+
+#### Yalnızca PC1 ile yarıçap ortalamasının  %72'si temsil edilirken 2 bileşenle birlikte %97'si temsil edilmektedir.
+
+
+### Destekleyici Görseller
+```{r echo=FALSE, fig.height=11, fig.width=14, message=FALSE, warning=FALSE}
+ggbiplot(data.pca,ellipse=TRUE,choices=c(1,2),labels=rownames(data))
+```
+
+#### İki vektörün birbirine yakın olması birbiriyle  ilişkili olduğunu göstermektedir.*radius*,*perimeter* ve *area* değişkenleri ile *smoothnes* ve *symmetry* değişkenleri birbirlerine oldukça yakın oldukları için aradaki ilişki de kuvvetlidir. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_pca_var(data.pca, col.var = "contrib",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE )
+```            
+
+####  *concave_points_mean*  ve *fractal_dimensional_mean* değişkenlerinin aralarındakı açı 90 dereceye yakın olduğu için  korelasyonlarının düşük olduğu söylenebilir.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+fviz_pca_biplot(data.pca, repel = TRUE,
+                col.var = "#2E9FDF", # Variables color
+                col.ind = "#696969"  # Individuals color
+)
+
+```
+
+### PC1-PC2
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=c(2,2))
+fviz_pca_var(data.pca, axes = c(1, 2), col.var = "cos2",
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"), 
+             repel = TRUE # Avoid text overlapping
+)
+
+```
+
+
+# 4) Uzaklık-Benzerlik Matrisleri
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+summary(scale_data) 
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+boxplot(scale_data,main= "Standartlaştırılmış Kutu Grafiği")
+```
+
+#### Değişkenlerin özet istatistik değerleri ve kutu grafiklerine bakıldığında sapan değerler görülüyor.
+
+```{r echo=TRUE, fig.height=7, fig.width=5, message=FALSE, warning=FALSE}
+dist_eucl=dist(scale_data, method="euclidean")
+fviz_dist(dist_eucl)
+```
+
+
+```{r echo=TRUE, fig.height=7, fig.width=5, message=FALSE, warning=FALSE}
+dist_man=dist(scale_data, method="manhattan") 
+fviz_dist(dist_man)
+```
+
+
+```{r fig.height=7, fig.width=5, message=FALSE, warning=FALSE, include=FALSE}
+dist.cor=get_dist(scale_data, method="pearson")
+fviz_dist(dist.cor)
+```
+
+```{r include=FALSE}
+round(as.matrix(dist_eucl)[1:5, 1:5], 2)
+round(as.matrix(dist_man)[1:5, 1:5], 2)
+round(as.matrix(dist.cor)[1:5, 1:5], 1)
+```
+
+
+#### Veriler arasındaki uzaklıkları ölçmek için üç farklı yöntem de denenmiştir.Üç yöntemde birbirine paralel sonuçlar vermiştir. Manhattan uzaklık ölçüsü Öklide göre 3 kat daha vurguludur. Pearson ise bu iki uzaklık ölçüsünden daha farklı bir konumdadır. Değişkenler arasındaki benzerlik bakımından sonuçları gösterir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+round(as.matrix(dist_man)[63:64,73:74], 2)
+```
+
+#### 64-73->>17.92 birbirine uzak gözlem değerleridir.(Diagnosis 64 =B, 73=M)
+#### 63-73->>5.38 birbirine yakın gözlem değerleridir.(Diagnosis=M)
+
+# Kümeleme Analizleri
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+fviz_nbclust(scale_data,kmeans,method = "wss") # 2 ya da 3
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+fviz_nbclust(scale_data,kmeans,method = "silhouette") # 2
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+fviz_nbclust(scale_data,kmeans,method = "gap_stat") # 2
+```
+
+#### Optimal küme sayısına karar vermek için üç yönteminde sonuçlarına bakılmıştır.Optimal küme sayısı 2 ya da 3 olabilir. kmeans ve kmedoids için *scale* data üzerinden yapılan analiz sonuçları aşağıdadır. Asıl analize PCA ile boyut küçültülmüş veri üzerinden devam edilmiştir.
+
+
+```{r eval=FALSE, include=FALSE}
+### k=2
+set.seed(123)
+km_res_2 <- kmeans(scale_data, 2, nstart=50) 
+print(km_res_2)
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_cluster(km_res_2, data = scale_data,
+             ellipse.type = "convex", # Concentration ellipse
+             star.plot = TRUE, # Add segments from centroids to items
+             repel = TRUE, # Avoid label overplotting (slow)
+            )
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+### k=3
+set.seed(123)
+km_res_3 <- kmeans(scale_data, 3, nstart=50) 
+print(km_res_3)
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_cluster(km_res_3, data =scale_data,
+             ellipse.type = "convex",
+             star.plot = TRUE, 
+             repel = TRUE, 
+            )
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+### k=4
+set.seed(123)
+km_res_4 <- kmeans(scale_data, 4, nstart=50) 
+print(km_res_4)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_cluster(km_res_4, data = scale_data,
+             ellipse.type = "convex",
+             star.plot = TRUE, 
+             repel = TRUE, 
+            )
+```
+#### Model;                 Kümelerin sahip olduğu eleman sayıları;
+#### k=2 için %38.8         169, 399
+#### k=3 için %49.9         116, 118, 334
+#### k=4 için %56.3         44, 314, 105, 105
+#### açıklayıcılığa sahiptir.
+
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_nbclust(scale_data, pam, method= "silhouette") #max. oldugu nokta dikkate alindigindan k degeri 2 olarak secilir.
+
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_nbclust(scale_data, pam, method= "wss")#2 ya 3 olabilir
+
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_nbclust(scale_data, pam, method= "gap") # 2
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+### kmedoids=2
+pam_data_2 <- pam(scale_data,2)
+print(pam_data_2)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_cluster(pam_data_2,
+             ellipse.type = "convex",
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+### kmedoids k=2
+aggregate(scale_data, by=list(pam_data_2$cluster), mean) 
+aggregate(scale_data, by=list(pam_data_2$cluster), sd)
+
+```
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+### kmedoids=3
+pam_data_3 <- pam(scale_data,3)
+print(pam_data_3)
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_cluster(pam_data_3,
+             ellipse.type = "convex",
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+
+## 5) PCA + K Means
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+summary(data.pca)
+data_pca <- predict(data.pca)[,1:2]
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_nbclust(data_pca,kmeans,method = "silhouette") #2
+fviz_nbclust(data_pca,kmeans,method = "gap_stat") #2
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(data_pca,kmeans,method = "wss",nstart=25,iter.max=200) +labs(subtitle = "Wss Metodu")
+```
+
+### Optimal küme sayısına karar vermek için üç metod da denemiştir ve üçü de paralel sonuçlar vermiştir. k=2 optimal küme sayısıdır. Yine de alternatif k değerleri için de analiz yapılmıştır.
+
+### PCA + kmeans=2
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+km_res_p1 <- kmeans(data_pca, 2, nstart=50) 
+print(km_res_p1)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(km_res_p1, data = data_pca,
+             ellipse.type = "convex", # Concentration ellipse
+             star.plot = TRUE, # Add segments from centroids to items
+             repel = TRUE, # Avoid label overplotting (slow)
+             ggtheme = theme_minimal()
+)
+```
+
+
+```{r echo=FALSE}
+aggregate(data_pca, by=list(km_res_p1$cluster), mean) #orjinal veri kullanılarak kümelere göre her değişken için ortalaması
+aggregate(data_pca, by=list(km_res_p1$cluster), sd)
+
+```
+
+
+### PCA + kmeans=3
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+km_res_p2 <- kmeans(data_pca, 3, nstart=50) 
+print(km_res_p2)
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(km_res_p2, data = data_pca,
+             ellipse.type = "convex", 
+             star.plot = TRUE, 
+             repel = TRUE, 
+             ggtheme = theme_minimal()
+)
+```
+
+```{r echo=FALSE}
+aggregate(data_pca, by=list(km_res_p2$cluster), mean) #orjinal veri kullanılarak kümelere göre her değişken için ortalaması
+aggregate(data_pca, by=list(km_res_p2$cluster), sd)
+```
+
+
+### PCA + kmeans=4
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+km_res_p3 <- kmeans(data_pca, 4, nstart=50) 
+print(km_res_p3)
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(km_res_p3, data = data_pca,
+             ellipse.type = "convex", 
+             star.plot = TRUE, 
+             repel = TRUE, 
+             ggtheme = theme_minimal()
+)
+```
+
+
+
+#### Model; ***********************       Kümelerin sahip olduğu eleman sayıları;
+#### k=2 için %48.5 ****************         169, 399
+#### k=3 için % 62.3 ****************       117, 117, 334  
+#### k=4 için %70.1   ****************      315, 104, 44, 105
+#### açıklayıcılığa sahiptir.
+#### Kümelerin açıklıyıcılıklarına  ve küme içi değişimlere bakıldığında k=2,3 optimal görünüyor.
+
+### 6) PCA + kmedoids
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+fviz_nbclust(data_pca, pam, method= "silhouette") # 2
+fviz_nbclust(data_pca, pam, method= "gap")# 2
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(data_pca, pam, method= "wss")+labs(subtitle = "Wss Metodu") # 2 ya da 3
+```
+
+### Optimal küme sayısına karar vermek için üç metod da denemiştir ve üçü de paralel sonuçlar vermiştir.Yine  k=2 optimal küme sayısıdır. Yine de alternatif k değerleri için de analiz yapılmıştır.
+
+### PCA + kmedoids=2
+```{r message=FALSE, warning=FALSE, include=FALSE}
+pam_data_pca2 <- pam(data_pca,2)
+print(pam_data_pca2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam_data_pca2,
+             ellipse.type = "convex",
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+aggregate(data_pca, by=list(pam_data_pca2$cluster), mean) 
+aggregate(data_pca, by=list(pam_data_pca2$cluster), sd)
+
+```
+
+### PCA +  kmedoids=3
+```{r message=FALSE, warning=FALSE, include=FALSE}
+pam_data_pca3 <- pam(data_pca,3)
+print(pam_data_pca3)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam_data_pca3,
+             ellipse.type = "convex",
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+#### k=4 ve sonraki k değerleri için küme içi çakışmalar fazladır.k=2|3  optimaldir.
+
+# 7) Aşamalı Kümeleme
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dist_euc <- dist(data_pca, method="euclidean")
+dist_man <- dist(data_pca, method="manhattan")
+as.matrix(dist_euc)[1:6,1:6]
+as.matrix(dist_man)[1:6,1:6]
+```
+
+#### ward.D2 bağlantı fonksiyonu ile
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_e_w <- hclust(d=dist_euc, method="ward.D2")
+plot(hc_e_w)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_m_w <- hclust(d=dist_man, method="ward.D2")
+plot(hc_m_w)
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e_w, cex = 0.5, main = "Dendrogram - ward.D2",
+          xlab = "Objects", ylab = "Distance", sub = "")
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_m_w,cex=.5)
+```
+
+## Kojenetik Uzaklık ile Orjinal Uzaklık Arasındaki Korelasyon
+### ward bağlantı fonk. ile:
+```{r}
+coph_e <- cophenetic(hc_e_w)
+as.matrix(coph_e)[1:6,1:6]
+as.matrix(dist_euc)[1:6,1:6]
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cor(dist_euc,coph_e) 
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+coph_m <- cophenetic(hc_m_w)
+as.matrix(coph_m)[1:6,1:6]
+as.matrix(dist_man)[1:6,1:6]
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+cor(dist_man,coph_m) 
+```
+
+### avarage bağlantı fonksiyonu ile
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_e_a <- hclust(d=dist_euc, method="average")
+plot(hc_e_a)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_m_a <- hclust(d=dist_man, method="average")
+plot(hc_m_a)
+```
+
+```{r}
+coph_e_a <- cophenetic(hc_e_a)
+as.matrix(coph_e_a)[1:6,1:6]
+as.matrix(dist_euc)[1:6,1:6]
+```
+
+```{r}
+cor(dist_euc,coph_e_a)
+```
+
+```{r}
+coph_m_a <- cophenetic(hc_m_a)
+as.matrix(coph_m_a)[1:6,1:6]
+as.matrix(dist_man)[1:6,1:6]
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+cor(dist_man,coph_m_a) 
+```
+
+### Küme ağacının ne kadar iyi olduğunu anlamak için kojentik uzaklık ile orjinal uzaklık arasındaki korelasyona bakılmıştır ve en yüksek sonuç 0.81 ile euclid metriğiyle average fonk.olmuştur.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+fviz_dend(hc_e_a,cex=.5) #cex yazı büyüklüğü içindir
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+fviz_dend(hc_m_a,cex=.5) #cex yazı büyüklüğü içindir
+```
+
+
+### cut tree in 2 groups
+```{r include=FALSE}
+grup1 <- cutree(hc_e_w, k=2) #### euclid average fonk. iyi sonuc vermemistir.
+grup1
+table(grup1) #171 #397
+rownames(data)[grup1==1]  
+rownames(data)[grup1==2]  
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e_w, k = 2, 
+          cex = 0.5, # label size
+          k_colors = c("#2E9FDF", "#FC4E07"),
+          color_labels_by_k = TRUE, # color labels by groups
+          rect = TRUE, # Add rectangle around groups
+          rect_border = c("#2E9FDF", "#FC4E07"),
+          rect_fill = TRUE)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = data_pca, cluster = grup1),
+             palette = c("#2E9FDF", "#00FF00", "#E7B800", "#FC4E07"),
+             ellipse.type = "convex", # Concentration ellipse
+             repel = TRUE, # Avoid label overplotting (slow)
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+#### k=2 için kümeleme yapıldığında çakışmalar görülmüştür.
+
+### cut tree in 3 groups
+```{r message=FALSE, warning=FALSE, include=FALSE}
+grup2 <- cutree(hc_e_w,k=3)
+grup2
+table(grup2)
+rownames(data)[grup2==1]  
+rownames(data)[grup2==2]  
+rownames(data)[grup2==3] 
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e_w, k = 3, 
+          cex = 0.5, # label size
+          color_labels_by_k = TRUE, # color labels by groups
+          rect = TRUE # Add rectangle around groups
+)
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = data_pca, cluster = grup2),
+             ellipse.type = "convex", # Concentration ellipse
+             repel = TRUE, # Avoid label overplotting (slow)
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+
+
+```
+
+#### k=3 2 kümeye göre daha iyi görünüyor.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+res.agnes <- agnes(x = data_pca, # data matrix
+                   stand = TRUE, # Standardize the data
+                   metric = "euclidean", # metric for distance matrix
+                   method = "ward" # Linkage method
+)
+
+fviz_dend(res.agnes, cex = 0.6, k = 2)
+fviz_dend(res.agnes, cex = 0.6, k = 3)
+```
+
+```{r include=FALSE}
+# DIvisive ANAlysis Clustering
+res.diana <- diana(x = scale_data, # data matrix
+                   stand = TRUE, # standardize the data
+                   metric = "euclidean" # metric for distance matrix
+                  
+)
+
+fviz_dend(res.diana, cex = 0.6, k = 2)
+fviz_dend(res.diana, cex = 0.6, k = 3)
+```
+  
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dend1 <- as.dendrogram(hc_e_w) #euclid ward
+dend2 <- as.dendrogram(hc_e_a) #euclid average 
+dend3 <- as.dendrogram(hc_m_w) #mannathan ward
+dend4 <- as.dendrogram(hc_m_a) #mannathan average
+```
+
+### Dendegramları Karşılaştırma
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+### Euclid ## 0.87
+tanglegram(dend1,dend2)
+dend_list <- dendlist(dend1,dend2)
+tanglegram(dend1, dend2,
+           highlight_distinct_edges = FALSE, # Turn-off dashed lines
+           common_subtrees_color_lines = FALSE, # Turn-off line colors
+           common_subtrees_color_branches = TRUE, # Color common branches
+           main = paste("entanglement =", round(entanglement(dend_list), 2)))
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+### ward ## 0.92
+tanglegram(dend1,dend3)
+dend_list <- dendlist(dend1,dend3)
+tanglegram(dend1, dend3,
+           highlight_distinct_edges = FALSE, # Turn-off dashed lines
+           common_subtrees_color_lines = FALSE, # Turn-off line colors
+           common_subtrees_color_branches = TRUE, # Color common branches
+           main = paste("entanglement =", round(entanglement(dend_list), 2)))
+```
+
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+### Average ## 0.75
+dend_list <- dendlist(dend2,dend4)
+tanglegram(dend2,dend4)
+tanglegram(dend2, dend4,
+           highlight_distinct_edges = FALSE, # Turn-off dashed lines
+           common_subtrees_color_lines = FALSE, # Turn-off line colors
+           common_subtrees_color_branches = TRUE, # Color common branches
+           main = paste("entanglement =", round(entanglement(dend_list), 2)))
+```
+
+```{r eval=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+### Mannathan ## 0.9
+dend_list <- dendlist(dend3,dend4)
+tanglegram(dend3,dend4)
+tanglegram(dend3, dend4,
+           highlight_distinct_edges = FALSE, # Turn-off dashed lines
+           common_subtrees_color_lines = FALSE, # Turn-off line colors
+           common_subtrees_color_branches = TRUE, # Color common branches
+           main = paste("entanglement =", round(entanglement(dend_list), 2)))
+```
+
+#### 2'li olarak 4 dendogram da karşılaştırılmıştır ve hepsinin entanglement değeri 1'e yakın çıkmıştır.Yani dendagramlar arasındaki uyum azdır. Karışıklık vardır. 
+
+```{r}
+set.seed(123)
+x <- dendlist(dend1,dend2) %>% untangle(method = "random", R = 10) 
+x %>% plot(main = paste("entanglement =", round(entanglement(x), 2))) ## 0.27
+```
+
+#### Entanglement değeri 0.27'ye düşürülmüştür.Dendegramlar arasındaki uyum artmıştır.
+
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+### Korelasyon
+#dend1:e_w dand2:e_a dand3=m_w dand4=m_a
+dend_list <- dendlist(dend1,dend2,dend3, dend4)
+cor.dendlist(dend_list, method = "cophenetic")
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+##farklı bağlantı fonksyonlarına göre karşılaştırma yapmak üzere 
+dend11 <- data %>% dist %>% hclust("complete") %>% as.dendrogram
+dend21 <- data %>% dist %>% hclust("single") %>% as.dendrogram
+dend31 <- data %>% dist %>% hclust("average") %>% as.dendrogram
+dend41 <- data %>% dist %>% hclust("centroid") %>% as.dendrogram
+dend51 <- data %>% dist %>% hclust("ward.D2") %>% as.dendrogram
+```
+
+### Korelasyon Matrisi
+```{r message=FALSE, warning=FALSE, include=FALSE}
+dend_list <- dendlist("Complete" = dend11, "Single" = dend21,
+                      "Average" = dend31, "Centroid" = dend41, "ward.D2" = dend51)
+cors <- cor.dendlist(dend_list)
+cors
+```
+
+#### En yüksek centroid ve average 0.96 ward.D2 ve average 0.85. Yani bu dendegramlar birbirlerine yakın sonuçlar vermektedir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+corrplot(cors, "pie", "lower")
+```
+
+### Küme-Ağaç Görselleştirilmesi
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_dend(hc_e_w, k = 2, k_colors = "jco",
+          type = "phylogenic", repel = TRUE)
+```
+
+# 8) Model Temelli Kümeleme
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+mc <- Mclust(data_pca)
+head(mc$z) #hangi gozlem kacıncı kumede
+head(mc$classification,10)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+summary(mc)
+```
+
+#### Model Temelli kümeleme algoritmasında oluşturulan 2 kümede 1. kümede 240 gözlem değeri yer alırken 2. kümede 328 gözlem değeri yer almaktadır. 
+### VVI ->Kümelerin hacimleri ve şekilleri farklı, benzer yönelimli
+
+### Optimal Küme Sayısı
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_mclust(mc, "BIC", palette = "jco") # n=2
+```
+
+#### Optimal küme sayısı 2 olarak gösterilmiştir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Classification: plot showing the clustering
+fviz_mclust(mc, "classification", geom = "point",
+            pointsize = 1.5, palette = "jco")
+``` 
+
+### Arada kalan gözlem değerleri
+```{r}
+fviz_mclust(mc, "uncertainty", palette = "jco",pos = FALSE)
+```
+
+### G=3
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+mc_3 <- Mclust(data, G=3)
+head(mc_3$classification,10)
+```
+
+```{r}
+summary(mc_3) #VVV
+```
+
+####  Küme sayısı 3 için bakıldığında ise model BIC değeri açısından daha iyi sonuç vermiştir.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+# Classification: plot showing the clustering
+fviz_mclust(mc_3, "classification", geom = "point",
+            pointsize = 1.5, palette = "jco")
+```
+
+#### Kümelerde çakışmalar görülmektedir.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+# Classification uncertainty
+fviz_mclust(mc_3, "uncertainty", palette = "jco",pos = FALSE)
+```
+
+#### Model Temelli kümeleme için seçilen k=2 seçilebilir.
+
+# 9) Yoğunluk Temelli Kümeleme
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+km.res <- kmeans(data_pca, 3, nstart = 25)
+km.res # 0.48
+```
+
+```{r}
+fviz_nbclust(data_pca, kmeans, nstart = 25, iter.max = 200, method = "wss") +
+  labs(subtitle = "Elbow method")
+```
+
+#### Optimal k=3 seçilerek DBSCAN yöntemi için oluşturulan kümeler:
+```{r}
+fviz_cluster(km.res, data_pca, geom = "point",
+             ellipse= FALSE, show.clust.cent = FALSE,
+             palette = "jco", ggtheme = theme_classic())
+```
+
+#### Küme sayısı k=2 ve k=3 için sonuç aynıdır.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+set.seed(123)
+dbscan::kNNdistplot(data_pca, k = 3)
+abline(h = 0.55, lty = 2)
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+db <- fpc::dbscan(data_pca, eps = 0.55, MinPts = 3)
+print(db)
+```
+
+### Plot DBSCAN 
+```{r}
+fviz_cluster(db, data = data_pca, stand = FALSE,
+             ellipse = FALSE, show.clust.cent = FALSE,
+             geom = "point",palette = "jco", ggtheme = theme_classic())
+
+```
+
+#### Gözlem sayısı çok olmadığı için Minpts=3 seçilmiştir. 34 tane aykırı gözlem vardır. 1. kümede 1 tane sınır değeri varken 2.kümede 5 tane sınır değeri vardır.
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+### k=4 
+set.seed(123)
+dbscan::kNNdistplot(data_pca, k = 4)
+abline(h = 0.55, lty = 2)
+
+db <- fpc::dbscan(data_pca, eps = 0.55, MinPts = 4)
+print(db)
+
+# Plot DBSCAN 
+fviz_cluster(db, data = data_pca, stand = FALSE,
+             ellipse = FALSE, show.clust.cent = FALSE,
+             geom = "point",palette = "jco", ggtheme = theme_classic())
+
+#### 45 aykiri deger ve 3 kume olusmustur.
+```
+
+
+# 10) Küme Geçerliliği
+## Küme Eğiliminin Değerlendirilmesi
+
+#### verinin kümeleme analizine uygun olup olmadığına bakmak için random data üzerinden karşılaştırma yapılmıştır.
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+random_data <- apply(data, 2,
+                   function(x){runif(length(x), min(x), (max(x)))})
+random_data <- as.data.frame(random_data)
+random_data <- scale(random_data)
+km_random_data <- kmeans(random_data, 2)
+
+fviz_cluster(list(data = random_data, cluster = km_random_data$cluster),
+             ellipse.type = "norm", geom = "point", stand = FALSE,
+             palette = "jco", ggtheme = theme_classic())+labs(subtitle = "Random Data")
+
+fviz_pca_ind(prcomp(random_data), title = "PCA - Random data",
+             geom = "point", ggtheme = theme_classic())
+
+
+
+
+fviz_pca_ind(prcomp(data_pca), title = "PCA ",
+             habillage = labeled_data$diagnosis, palette = "jco",
+             geom = "point", ggtheme = theme_classic(),
+             legend = "bottom")+labs(subtitle = "Orjinal Data")
+
+fviz_pca_ind(prcomp(data_pca), title = "PCA",
+            palette = "jco",
+             geom = "point", ggtheme = theme_classic(),legend = "bottom")
+
+
+```
+
+#### Random data sonuçlarına bakıldığında grafiklerin  dağınık olduğu  ve  kümeleme analizine uygun olmadığı görülüyor.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+set.seed(123)
+h_data <- hopkins(data_pca, nrow(data)-1)
+h_random_data <- hopkins(random_data, nrow(random_data)-1)
+cbind(h_data,h_random_data)
+```
+
+#### Hopkins istatistiğine göre random_data 0.50 çıktığı için kümelemeye uygun değilken orjinal veri 0'a daha yakın çıktığı için (0.20) kümelenebilir.
+
+```{r fig.height=5, fig.width=7}
+par(mfrow=c(1,2))
+fviz_dist(dist(data_pca), show_labels = FALSE )+
+  labs(title = "Orjinal Data") #Birbirine yakın olanlar bir arada. Homojen dağılım
+
+fviz_dist(dist(random_data), show_labels = FALSE)+
+  labs(title = "Random data") # Kümelemeye uygun değil.
+```
+
+#### Farklılık matrisine bakıldığında orjinal veri de küme yapısı görülürken random olarak üretilen veri de küme yapısı görülmez.
+
+### Optimal Küme Sayısının Belirlenmesi
+```{r message=FALSE, warning=FALSE, include=FALSE}
+par(mfrow=c(2,2))
+nb1 <- NbClust(data_pca, distance = "euclidean", min.nc = 2,
+              max.nc = 7, method = "kmeans")
+
+
+nb2 <- NbClust(data_pca, distance = "euclidean", min.nc = 2,
+              max.nc = 7, method = "centroid")#2
+
+
+nb3 <- NbClust(data_pca, distance = "euclidean", min.nc = 2,
+              max.nc = 7, method = "ward.D")#2
+
+
+nb_rd <- NbClust(random_data, distance = "euclidean", min.nc = 2,
+              max.nc = 7, method = "average") #2
+
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_nbclust(nb1) # Iterasyonlardan 8 tanesi 2 kumeyi 6 tanesi 3 kumeyi secmis
+fviz_nbclust(nb2)
+fviz_nbclust(nb3)
+fviz_nbclust(nb_rd)
+```
+
+#### Farklı metodlar için en uygun küme sayısını belirlemek için oluşturulan görsellere göre optimal küme sayısı tüm metodlar için k=2 dir.
+
+## Küme Geçerliliği İstatistikleri
+### K-means Kümeleme
+```{r}
+km_data <- eclust(data_pca, "kmeans", k = 2, nstart = 25, graph = TRUE)
+# Visualize k-means clusters
+fviz_cluster(km_data, geom = "point", ellipse.type = "norm",
+             palette = "jco", ggtheme = theme_minimal())
+```
+
+### K-Medoids
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+pam_data<-eclust(data_pca,"pam",k=2,graph=TRUE)
+fviz_cluster(pam_data,geom="point",ellipse.type="convex",ggtheme = theme_minimal(),
+          palette = "jco")
+```
+
+### Aşamalı Kümeleme
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+hc_data <- eclust(data_pca, "hclust", k = 2, hc_metric = "euclidean",hc_method = "ward.D2", graph = FALSE)
+# Visualize dendrograms
+fviz_cluster(list(data = data_pca, cluster = grup1),
+             palette = c("#2E9FDF", "#00FF00", "#E7B800", "#FC4E07"),
+             ellipse.type = "convex", # Concentration ellipse
+             repel = TRUE, # Avoid label overplotting (slow)
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+
+
+```{r message=TRUE, warning=FALSE, include=FALSE}
+### Silhouette plot
+fviz_silhouette(km_data, palette = "jco",
+                ggtheme = theme_classic()) #2.kumedeki veriler guzel kumelenmis. Orta duzeyde kumeleme yapılmış 0.50
+
+silinfo <- km_data$silinfo
+silinfo
+fviz_cluster(list(data = data_pca, cluster = km_data$cluster), data = data,
+             ellipse.type = "euclid", # Concentration ellipse
+             star.plot = TRUE, # Add segments from centroids to items
+             repel = TRUE, # Avoid label overplotting (slow)
+             ggtheme = theme_minimal()
+)
+ km_data$size
+```
+
+```{r message=TRUE, warning=FALSE, include=FALSE}
+### Silhouette plot
+fviz_silhouette(pam_data, palette = "jco",
+                ggtheme = theme_classic()) #2.kumedeki veriler guzel kumelenmis. Orta uüzeyde kumeleme yapılmıs 0.48
+
+silinfo <- pam_data$silinfo
+silinfo
+fviz_cluster(list(data = data_pca, cluster = pam_data$cluster), data = data,
+             ellipse.type = "euclid", # Concentration ellipse
+             star.plot = TRUE, # Add segments from centroids to items
+             repel = TRUE, # Avoid label overplotting (slow)
+             ggtheme = theme_minimal()
+)
+```
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+### Yanlış Kumelenmis gozlem degerleri
+# Silhouette widths of each observation
+head(silinfo$widths[, 1:3], 10)
+# Average silhouette width of each cluster
+silinfo$clus.avg.widths
+```
+
+
+### Dunn İndeksi ve diğer küme geçerliliği istatistikleri
+
+### Kmeans
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+km_stats <- cluster.stats(dist(data_pca), km_data$cluster)
+km_stats$dunn #0.007
+``` 
+
+### Kmedoids
+```{r}
+pam_stats<-cluster.stats(dist(data_pca),pam_data$cluster)
+pam_stats$dunn #0.013
+```
+
+### Hiyerarşik
+```{r}
+hc_stats<-cluster.stats(dist(data_pca),hc_data$cluster)
+hc_stats$dunn# 0.02
+```
+
+#### Dun indeksi en yüksek değeri 0.02 ile Hiyerarşik kümeleme de almıştır.Dunn indeksinin değerinin büyük olması doğru kümeleme yapıldığını gösterdiği için burada en iyi sonucu Hiyerarşik vermiştir. Fakat onun hemen ardından 0.013 Dunn indeksi ile Kmedoids gelmektedir.
+
+## Algoritmaların karşılaştırılması
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+library(clValid)
+clmethods <- c("kmeans","pam","hierarchical")
+intern <- clValid(data_pca, nClust = 2:6,
+                  clMethods = clmethods, validation = "internal")
+summary(intern)
+```
+
+
+### PCA +kmedoids=2
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam_data_pca2,
+             ellipse.type = "convex",
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+### Aşamalı Kümeleme
+
+```{r include=FALSE}
+grup1 <- cutree(hc_e_w, k=2) #### euclid average fonk. iyi sonuc vermemistir.
+grup1
+table(grup1) # 1<-171 2<-397
+rownames(data)[grup1==1]  
+rownames(data)[grup1==2]  
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(list(data = data_pca, cluster = grup1),
+             palette = c("#2E9FDF", "#00FF00", "#E7B800", "#FC4E07"),
+             ellipse.type = "convex", # Concentration ellipse
+             repel = TRUE, # Avoid label overplotting (slow)
+             show.clust.cent = FALSE, ggtheme = theme_minimal())
+```
+
+
+
+#### Küme geçerliliği istatistiklerine göre en iyi sonuçları veren yöntem *hierarcihical* olmuştur. 
+#### *Dunn* ve *Silhouette* değerleri açısından yüksekken Bağlantı değeri düşüktür. Fakat Aşamalı kümeleme yapıldığında kümelerde çakışmalar görülmektedir. Bu anlamda kmedoids kümeleme çakışma açısından daha iyi sonuçlar vermektedir.
+#### DBSCAN algoritması 3 küme önerdiği ve küme içi gözlem sayıları birbirinden çok farklı olduğu için alternatif olarak 2 kümeli Model Temelli Yoğunluk algoritması da düşünülebilir.
+
+#### Final modeli olarak 2 kümeli Kmedoids algoritması seçilmiştir.
+
+# 11) Final Modeli
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+print(pam_data_pca2)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+fviz_cluster(pam_data_pca2,
+             ellipse.type = "convex",
+             repel = TRUE, 
+             ggtheme = theme_classic()
+)
+```
+
+## Kümelere Ait Tanımlayıcı İstatistikler
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+aggregate(data, by=list(pam_data_pca2$cluster), mean) 
+aggregate(data, by=list(pam_data_pca2$cluster), sd)
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+table(pam_data_pca2$cluster)
+```
+
+#### Orjinal veri için küme içi değişimlere bakıldığında kümelerin standart sapmaları ortalamaya göre büyük değildir yani küme içi homojenlikten söz edilebilir. İki kümenin ortalamaları ise birbirinden farklıdır. Bu da doğru kümeleme yapıldığı anlamına gelir.
+#### 1.kümede 190 gözlem bulunurken 2. kümede 378 adet gözlem değeri vardır. Aşamalı kümelemede ise küme eleman sayıları daha heterojendir. (1->171 2->397)
+
